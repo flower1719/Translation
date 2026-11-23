@@ -40,13 +40,20 @@
 
     select,
     input[type='text'],
-    input[type='password'] {
+    input[type='password'],
+    input[type='number'] {
       width: 100%;
       box-sizing: border-box;
       padding: 6px 8px;
       border: 1px solid #ccc;
       border-radius: 6px;
       font-size: 13px;
+    }
+
+    .hint {
+      margin-top: 4px;
+      font-size: 11px;
+      color: #666;
     }
 
     .llm-box {
@@ -86,6 +93,22 @@
   <div class="row">
     <label for="enabled" style="margin: 0; font-weight: 600;">开启翻译</label>
     <input type="checkbox" id="enabled" />
+  </div>
+
+  <div class="row">
+    <label for="hoverTranslateEnabled" style="margin: 0; font-weight: 600;">悬停快捷键翻译</label>
+    <input type="checkbox" id="hoverTranslateEnabled" />
+  </div>
+
+  <div id="hoverShortcutBox" class="field">
+    <label for="hoverShortcut">悬停翻译快捷键</label>
+    <input type="text" id="hoverShortcut" readonly placeholder="点击后按下组合键，如 Shift+T" />
+    <div class="hint">点击输入框后直接按下组合键即可修改（如 Shift+T、Alt+T）</div>
+  </div>
+
+  <div class="field">
+    <label for="maxTranslateLength">最大翻译字数</label>
+    <input type="number" id="maxTranslateLength" min="10" max="10000" step="50" placeholder="500" />
   </div>
 
   <div class="field">

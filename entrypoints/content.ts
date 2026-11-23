@@ -1,22 +1,28 @@
-import { uiSettingsStorage } from '../utils/setting';
+import {
+  DEFAULT_UISETTINGS,
+  matchesShortcut,
+  type UiSetting,
+  uiSettingsStorage,
+} from '../utils/setting';
 
 export default defineContentScript({
   matches: ['<all_urls>'],
   main() {
     let tooltip: HTMLDivElement | null = null;
-    let isEnabled = true;
+    let uiSettings: UiSetting = { ...DEFAULT_UISETTINGS };
     let mouseDownPos = { x: 0, y: 0 };
+    let lastMousePos = { x: 0, y: 0 };
     let closedOnMouseDown = false;
 
-    //初始化读取开关状态
+    // 初始化读取 UI 配置
     uiSettingsStorage.getValue().then((settings) => {
-      isEnabled = settings.enabled;
+      uiSettings = { ...DEFAULT_UISETTINGS, ...settings };
     });
 
-    //监听全局配置变化
+    // 监听全局配置变化
     uiSettingsStorage.watch((newSettings) => {
-      isEnabled = newSettings.enabled;
-      if (!isEnabled) {
+      uiSettings = { ...DEFAULT_UISETTINGS, ...newSettings };
+      if (!uiSettings.enabled) {
         hideTooltip();
       }
     });
@@ -44,7 +50,6 @@ export default defineContentScript({
         });
         tooltip.style.setProperty('-webkit-backdrop-filter', 'blur(14px) saturate(180%)');
         document.body.appendChild(tooltip);
-
       }
 
       const left = Math.min(x + 10, window.innerWidth - 340);
@@ -62,13 +67,85 @@ export default defineContentScript({
       }
     }
 
+    async function translateAndShow(text: string, x: number, y: number) {
+      if (!text) return;
+
+      const maxLen = uiSettings.maxTranslateLength;
+      if (text.length > maxLen) {
+        showTooltip(x, y, `选中文本过长，请分段翻译（≤${maxLen}字）`);
+        return;
+      }
+
+      showTooltip(x, y, '翻译中...');
+
+      try {
+        const response = await browser.runtime.sendMessage({
+          type: 'TRANSLATE',
+          text,
+        });
+
+        if (response?.success) {
+          showTooltip(x, y, response.translatedText);
+        } else {
+          showTooltip(x, y, `翻译失败：${response?.error ?? '未知错误'}`);
+        }
+      } catch (err) {
+        showTooltip(x, y, `通信出错：${String(err)}`);
+      }
+    }
+
+    function extractTextAtPoint(x: number, y: number): string {
+      const el = document.elementFromPoint(x, y) as HTMLElement | null;
+      if (!el || (tooltip && tooltip.contains(el))) return '';
+
+      const innerText = el.innerText?.trim();
+      if (innerText && innerText.length <= uiSettings.maxTranslateLength) {
+        return innerText;
+      }
+
+      const range = document.caretRangeFromPoint?.(x, y);
+      const nodeText = range?.startContainer?.textContent?.trim();
+      if (nodeText) {
+        return nodeText;
+      }
+
+      if (innerText) {
+        return innerText;
+      }
+
+      return (
+        el.getAttribute('aria-label') ||
+        el.getAttribute('title') ||
+        el.getAttribute('placeholder') ||
+        el.getAttribute('alt') ||
+        ''
+      ).trim();
+    }
+
+    function isEditableTarget(target: EventTarget | null): boolean {
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName;
+      return (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        target.isContentEditable
+      );
+    }
+
+    document.addEventListener('mousemove', (event) => {
+      lastMousePos = { x: event.clientX, y: event.clientY };
+    });
+
     document.addEventListener('mouseup', async (event) => {
-      if (!isEnabled) return;
+      if (!uiSettings.enabled) return;
       if (tooltip && tooltip.contains(event.target as Node)) {
         return;
       }
 
-      const isClick = Math.abs(event.clientX - mouseDownPos.x) < 3 && Math.abs(event.clientY - mouseDownPos.y) < 3;
+      const isClick =
+        Math.abs(event.clientX - mouseDownPos.x) < 3 &&
+        Math.abs(event.clientY - mouseDownPos.y) < 3;
       if (closedOnMouseDown && isClick) {
         closedOnMouseDown = false;
         return;
@@ -81,27 +158,21 @@ export default defineContentScript({
         return;
       }
 
-      if (selectedText.length > 500) {
-        showTooltip(event.clientX, event.clientY, '选中文本过长，请分段划词（≤500字）');
+      await translateAndShow(selectedText, event.clientX, event.clientY);
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (!uiSettings.enabled || !uiSettings.hoverTranslateEnabled) return;
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) {
         return;
       }
+      if (!matchesShortcut(event, uiSettings.hoverShortcut)) return;
 
-      showTooltip(event.clientX, event.clientY, '翻译中...');
+      const text = extractTextAtPoint(lastMousePos.x, lastMousePos.y);
+      if (!text) return;
 
-      try {
-        const response = await browser.runtime.sendMessage({
-          type: 'TRANSLATE',
-          text: selectedText,
-        });
-
-        if (response?.success) {
-          showTooltip(event.clientX, event.clientY, response.translatedText);
-        } else {
-          showTooltip(event.clientX, event.clientY, `翻译失败：${response?.error ?? '未知错误'}`);
-        }
-      } catch (err) {
-        showTooltip(event.clientX, event.clientY, `通信出错：${String(err)}`);
-      }
+      event.preventDefault();
+      translateAndShow(text, lastMousePos.x, lastMousePos.y);
     });
 
     document.addEventListener('mousedown', (event) => {
